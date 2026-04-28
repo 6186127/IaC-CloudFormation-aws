@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>To-Do Manager</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero">
+        <p class="eyebrow">Simple Full-Stack Assignment</p>
+        <h1>To-do items with API storage and browser cache</h1>
+        <p class="intro">
+          Create tasks in the frontend, sync them to the Node.js backend, and keep a copy in
+          browser local storage.
+        </p>
+      </section>
+
+      <section class="panel">
+        <form id="todo-form" class="todo-form">
+          <input id="todo-input" type="text" placeholder="Add a new task" maxlength="120" required />
+          <button type="submit">Add Task</button>
+        </form>
+
+        <div class="toolbar">
+          <span id="status-text">Loading tasks...</span>
+          <button id="refresh-button" type="button" class="secondary">Refresh</button>
+        </div>
+
+        <ul id="todo-list" class="todo-list"></ul>
+      </section>
+    </main>
+
+    <template id="todo-item-template">
+      <li class="todo-item">
+        <label class="todo-main">
+          <input class="todo-toggle" type="checkbox" />
+          <span class="todo-title"></span>
+        </label>
+        <button class="delete-button" type="button">Delete</button>
+      </li>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
