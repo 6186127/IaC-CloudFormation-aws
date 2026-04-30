@@ -1,11 +1,19 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Single-stack infrastructure for the todo frontend and backend on ECS Fargate.
+Description: CI/CD-enabled infrastructure for the todo frontend and backend on ECS Fargate.
 
 Parameters:
   AppName:
     Type: String
     Default: todo-app
     Description: Prefix used for resource names.
+  CodeBranchName:
+    Type: String
+    Default: main
+    Description: CodeCommit branch monitored by CodePipeline.
+  AlertEmail:
+    Type: String
+    Default: ''
+    Description: Optional email address for SNS alarm notifications.
   VpcCidr:
     Type: String
     Default: 10.0.0.0/16
@@ -32,12 +40,24 @@ Parameters:
     Description: Container port exposed by the backend image.
   FrontendDesiredCount:
     Type: Number
-    Default: 1
-    MinValue: 1
+    Default: 0
+    MinValue: 0
+    Description: Bootstrap desired count for the frontend ECS service.
   BackendDesiredCount:
     Type: Number
+    Default: 0
+    MinValue: 0
+    Description: Bootstrap desired count for the backend ECS service.
+  FrontendRuntimeCount:
+    Type: Number
     Default: 1
-    MinValue: 1
+    MinValue: 0
+    Description: Desired frontend task count applied by the deployment pipeline.
+  BackendRuntimeCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: Desired backend task count applied by the deployment pipeline.
   FrontendCpu:
     Type: Number
     Default: 256
@@ -57,11 +77,22 @@ Parameters:
   FrontendImageTag:
     Type: String
     Default: latest
-    Description: ECR image tag to deploy for the frontend container.
+    Description: Bootstrap image tag used when creating the frontend task definition.
   BackendImageTag:
     Type: String
     Default: latest
-    Description: ECR image tag to deploy for the backend container.
+    Description: Bootstrap image tag used when creating the backend task definition.
+  CpuAlarmThreshold:
+    Type: Number
+    Default: 70
+    Description: CPUUtilization threshold for ECS service alarms.
+  Http5xxAlarmThreshold:
+    Type: Number
+    Default: 1
+    Description: ALB HTTP 5xx threshold for the alarm.
+
+Conditions:
+  HasAlertEmail: !Not [!Equals [!Ref AlertEmail, '']]
 
 Resources:
   VPC:
@@ -215,6 +246,19 @@ Resources:
       ImageScanningConfiguration:
         ScanOnPush: true
 
+  CodeRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub ${AppName}-repo
+      RepositoryDescription: Source repository for the todo application pipeline.
+
+  PipelineArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${AppName}-${AWS::AccountId}-${AWS::Region}-pipeline-artifacts
+      VersioningConfiguration:
+        Status: Enabled
+
   ECSCluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -255,6 +299,142 @@ Resources:
             Principal:
               Service: ecs-tasks.amazonaws.com
             Action: sts:AssumeRole
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AppName}-codebuild-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::${PipelineArtifactBucket}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketVersioning
+                  - s3:GetBucketAcl
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${PipelineArtifactBucket}
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:PutImage
+                  - ecr:UploadLayerPart
+                Resource:
+                  - !GetAtt FrontendRepository.Arn
+                  - !GetAtt BackendRepository.Arn
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                  - ecs:DescribeServices
+                Resource:
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${ECSCluster}/${AppName}-frontend
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${ECSCluster}/${AppName}-backend
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: '*'
+
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AppName}-codepipeline-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource: !Sub arn:aws:s3:::${PipelineArtifactBucket}/*
+              - Effect: Allow
+                Action:
+                  - s3:GetBucketVersioning
+                  - s3:ListBucket
+                Resource: !Sub arn:aws:s3:::${PipelineArtifactBucket}
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetRepository
+                  - codecommit:GitPull
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource: !GetAtt CodeRepository.Arn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource:
+                  - !GetAtt TestBuildProject.Arn
+                  - !GetAtt DeployBuildProject.Arn
+
+  PipelineEventsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${AppName}-pipeline-events-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:StartPipelineExecution
+                Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AppName}-pipeline
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AppName}-alerts
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlertEmail
+    Properties:
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+      TopicArn: !Ref AlertTopic
 
   ALBSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -349,6 +529,46 @@ Resources:
       Actions:
         - Type: forward
           TargetGroupArn: !Ref BackendTargetGroup
+
+  TestBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AppName}-test
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        Type: LINUX_CONTAINER
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.test.yml
+
+  DeployBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${AppName}-deploy
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: APP_NAME
+            Value: !Ref AppName
+          - Name: ECS_CLUSTER_NAME
+            Value: !Ref ECSCluster
+          - Name: FRONTEND_RUNTIME_COUNT
+            Value: !Ref FrontendRuntimeCount
+          - Name: BACKEND_RUNTIME_COUNT
+            Value: !Ref BackendRuntimeCount
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspec.deploy.yml
 
   FrontendTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -446,6 +666,208 @@ Resources:
           ContainerPort: !Ref BackendContainerPort
           TargetGroupArn: !Ref BackendTargetGroup
 
+  ApplicationDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub ${AppName}-dashboard
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ECS CPUUtilization",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Average",
+                "metrics": [
+                  [ "AWS/ECS", "CPUUtilization", "ClusterName", "${ECSCluster}", "ServiceName", "${AppName}-frontend" ],
+                  [ ".", ".", ".", ".", "ServiceName", "${AppName}-backend" ]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ALB HTTP 5xx",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Sum",
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}" ]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Target Response Time",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Average",
+                "metrics": [
+                  [ "AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}", "TargetGroup", "${FrontendTargetGroup.TargetGroupFullName}" ],
+                  [ ".", ".", ".", ".", "TargetGroup", "${BackendTargetGroup.TargetGroupFullName}" ]
+                ]
+              }
+            },
+            {
+              "type": "metric",
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Healthy Hosts",
+                "region": "${AWS::Region}",
+                "view": "timeSeries",
+                "stat": "Average",
+                "metrics": [
+                  [ "AWS/ApplicationELB", "HealthyHostCount", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}", "TargetGroup", "${FrontendTargetGroup.TargetGroupFullName}" ],
+                  [ ".", ".", ".", ".", "TargetGroup", "${BackendTargetGroup.TargetGroupFullName}" ]
+                ]
+              }
+            }
+          ]
+        }
+
+  FrontendCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-frontend-cpu
+      AlarmDescription: Frontend ECS CPU utilization threshold exceeded.
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref CpuAlarmThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+        - Name: ServiceName
+          Value: !Sub ${AppName}-frontend
+      AlarmActions:
+        - !Ref AlertTopic
+
+  BackendCpuAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-backend-cpu
+      AlarmDescription: Backend ECS CPU utilization threshold exceeded.
+      Namespace: AWS/ECS
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref CpuAlarmThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Ref ECSCluster
+        - Name: ServiceName
+          Value: !Sub ${AppName}-backend
+      AlarmActions:
+        - !Ref AlertTopic
+
+  Alb5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AppName}-alb-5xx
+      AlarmDescription: ALB HTTP 5xx threshold exceeded.
+      Namespace: AWS/ApplicationELB
+      MetricName: HTTPCode_ELB_5XX_Count
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref Http5xxAlarmThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+      AlarmActions:
+        - !Ref AlertTopic
+
+  DeploymentPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub ${AppName}-pipeline
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: !GetAtt CodeRepository.Name
+                BranchName: !Ref CodeBranchName
+                PollForSourceChanges: false
+              OutputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+        - Name: Test
+          Actions:
+            - Name: Test
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref TestBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+        - Name: Deploy
+          Actions:
+            - Name: BuildAndDeploy
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeployBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              RunOrder: 1
+
+  CodeCommitPipelineRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Start the pipeline when code is pushed to CodeCommit.
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !GetAtt CodeRepository.Arn
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref CodeBranchName
+      Targets:
+        - Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${AppName}-pipeline
+          Id: codepipeline
+          RoleArn: !GetAtt PipelineEventsRole.Arn
+
 Outputs:
   LoadBalancerUrl:
     Description: Public URL for the application.
@@ -456,6 +878,24 @@ Outputs:
   BackendRepositoryUri:
     Description: ECR repository URI for the backend image.
     Value: !GetAtt BackendRepository.RepositoryUri
+  CodeCommitCloneHttpUrl:
+    Description: Clone URL for the CodeCommit repository.
+    Value: !GetAtt CodeRepository.CloneUrlHttp
+  CodePipelineName:
+    Description: Name of the deployment pipeline.
+    Value: !Ref DeploymentPipeline
+  TestBuildProjectName:
+    Description: CodeBuild project name for the automated test stage.
+    Value: !Ref TestBuildProject
+  DeployBuildProjectName:
+    Description: CodeBuild project name for the build and deploy stage.
+    Value: !Ref DeployBuildProject
+  AlertTopicArn:
+    Description: SNS topic used for alarm notifications.
+    Value: !Ref AlertTopic
+  DashboardName:
+    Description: CloudWatch dashboard name.
+    Value: !Ref ApplicationDashboard
   ECSClusterName:
     Description: ECS cluster name.
     Value: !Ref ECSCluster

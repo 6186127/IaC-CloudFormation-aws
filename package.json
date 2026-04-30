@@ -4,7 +4,8 @@
   "private": true,
   "description": "Simple full-stack todo application with frontend and backend services.",
   "scripts": {
-    "start": "node backend/server.js"
+    "start": "node backend/server.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",

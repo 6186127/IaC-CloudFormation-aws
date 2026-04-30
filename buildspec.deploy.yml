@@ -1,0 +1,24 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - AWS_REGION=${AWS_DEFAULT_REGION}
+      - FRONTEND_REPOSITORY_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_NAME}-frontend
+      - BACKEND_REPOSITORY_URI=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${APP_NAME}-backend
+      - IMAGE_TAG=$(echo ${CODEBUILD_RESOLVED_SOURCE_VERSION} | cut -c 1-7)
+      - aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+  build:
+    commands:
+      - docker build -f frontend/Dockerfile -t ${FRONTEND_REPOSITORY_URI}:${IMAGE_TAG} -t ${FRONTEND_REPOSITORY_URI}:latest .
+      - docker build -f backend/Dockerfile -t ${BACKEND_REPOSITORY_URI}:${IMAGE_TAG} -t ${BACKEND_REPOSITORY_URI}:latest .
+  post_build:
+    commands:
+      - docker push ${FRONTEND_REPOSITORY_URI}:${IMAGE_TAG}
+      - docker push ${FRONTEND_REPOSITORY_URI}:latest
+      - docker push ${BACKEND_REPOSITORY_URI}:${IMAGE_TAG}
+      - docker push ${BACKEND_REPOSITORY_URI}:latest
+      - aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service ${APP_NAME}-frontend --desired-count ${FRONTEND_RUNTIME_COUNT} --force-new-deployment
+      - aws ecs update-service --cluster ${ECS_CLUSTER_NAME} --service ${APP_NAME}-backend --desired-count ${BACKEND_RUNTIME_COUNT} --force-new-deployment
+      - aws ecs wait services-stable --cluster ${ECS_CLUSTER_NAME} --services ${APP_NAME}-frontend ${APP_NAME}-backend

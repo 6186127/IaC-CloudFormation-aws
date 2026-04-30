@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CodePipelineArtifactReadWrite",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObject"
+      ],
+      "Resource": "arn:aws:s3:::codepipeline-us-east-1-09712fc7c4bc-4b91-b99d-9236bc0f035d/*"
+    },
+    {
+      "Sid": "CodePipelineArtifactBucketList",
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketVersioning"
+      ],
+      "Resource": "arn:aws:s3:::codepipeline-us-east-1-09712fc7c4bc-4b91-b99d-9236bc0f035d"
+    }
+  ]
+}

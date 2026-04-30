@@ -1,0 +1,14 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CodeCommitGitAccess",
+      "Effect": "Allow",
+      "Action": [
+        "codecommit:GitPull",
+        "codecommit:GitPush"
+      ],
+      "Resource": "arn:aws:codecommit:us-east-1:345594568549:todo-app-repo"
+    }
+  ]
+}
