@@ -95,6 +95,29 @@ app.delete("/api/todos/:id", async (req, res) => {
   res.status(204).send();
 });
 
+app.get("/api/test/target-5xx", (req, res) => {
+  const rawCode = Number.parseInt(req.query.code ?? "500", 10);
+  const allowedCodes = new Set([500, 502, 503, 504]);
+  const code = allowedCodes.has(rawCode) ? rawCode : 500;
+  const rate = Math.min(1, Math.max(0, Number.parseFloat(req.query.rate ?? "0.5")));
+
+  if (Number.isNaN(rate)) {
+    return res.status(400).json({ message: "rate must be a number between 0 and 1." });
+  }
+
+  if (Math.random() < rate) {
+    return res.status(code).json({
+      message: "Synthetic target failure for CloudWatch testing.",
+      code
+    });
+  }
+
+  res.json({
+    message: "Synthetic target success for CloudWatch testing.",
+    code: 200
+  });
+});
+
 async function bootstrap() {
   await ensureDatabase();
   if (await frontendExists()) {

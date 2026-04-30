@@ -145,10 +145,25 @@ The stack creates:
 
 - a CloudWatch dashboard
 - CPU alarms for frontend and backend ECS services
-- an ALB HTTP 5xx alarm
+- a backend target HTTP 5xx alarm
 - an SNS topic for notifications
 
 If you pass `AlertEmail`, AWS sends a subscription confirmation email. You must confirm it before alarm emails will be delivered.
+
+To generate visible `HTTPCode_Target_5XX_Count` spikes, send requests to the backend-only test route after deployment:
+
+```bash
+ALB_URL="http://your-alb-dns-name"
+
+for i in $(seq 1 40); do
+  curl -s -o /dev/null -w "%{http_code}\n" "${ALB_URL}/api/test/target-5xx?code=503&rate=0.6"
+  sleep 2
+done
+```
+
+This route returns `200` for some requests and `500`/`502`/`503`/`504` for others, so the target 5xx graph shows a spike instead of a flat line.
+
+Requests such as `/34324/120/API/113` do not help here because the ALB listener only forwards lowercase `/api/*` to the backend. Other paths fall through to the frontend and return `200` with `index.html`.
 
 ### Cleanup
 
@@ -166,3 +181,4 @@ aws cloudformation delete-stack \
 - `POST /api/todos` - create a todo
 - `PUT /api/todos/:id` - update a todo
 - `DELETE /api/todos/:id` - delete a todo
+- `GET /api/test/target-5xx?code=503&rate=0.6` - generate synthetic backend 5xx responses for CloudWatch testing

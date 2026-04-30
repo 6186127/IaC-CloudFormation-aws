@@ -693,12 +693,12 @@ Resources:
               "width": 12,
               "height": 6,
               "properties": {
-                "title": "ALB HTTP 5xx",
+                "title": "Backend Target HTTP 5xx",
                 "region": "${AWS::Region}",
                 "view": "timeSeries",
                 "stat": "Sum",
                 "metrics": [
-                  [ "AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}" ]
+                  [ "AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${ApplicationLoadBalancer.LoadBalancerFullName}", "TargetGroup", "${BackendTargetGroup.TargetGroupFullName}" ]
                 ]
               }
             },
@@ -778,10 +778,10 @@ Resources:
   Alb5xxAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
-      AlarmName: !Sub ${AppName}-alb-5xx
-      AlarmDescription: ALB HTTP 5xx threshold exceeded.
+      AlarmName: !Sub ${AppName}-backend-target-5xx
+      AlarmDescription: Backend target HTTP 5xx threshold exceeded.
       Namespace: AWS/ApplicationELB
-      MetricName: HTTPCode_ELB_5XX_Count
+      MetricName: HTTPCode_Target_5XX_Count
       Statistic: Sum
       Period: 300
       EvaluationPeriods: 1
@@ -790,6 +790,8 @@ Resources:
       Dimensions:
         - Name: LoadBalancer
           Value: !GetAtt ApplicationLoadBalancer.LoadBalancerFullName
+        - Name: TargetGroup
+          Value: !GetAtt BackendTargetGroup.TargetGroupFullName
       AlarmActions:
         - !Ref AlertTopic
 

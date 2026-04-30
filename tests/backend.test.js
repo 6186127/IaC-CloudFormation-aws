@@ -180,3 +180,60 @@ test("todo API rejects empty titles and missing records", async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("target 5xx test endpoint can force success and failures", async () => {
+  const port = await getFreePort();
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-api-test-"));
+  const dbPath = path.join(tempDir, "todos.json");
+
+  const server = spawn("node", ["backend/server.js"], {
+    cwd: path.join(__dirname, ".."),
+    env: {
+      ...process.env,
+      PORT: String(port),
+      TODO_DB_PATH: dbPath
+    },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+
+  await new Promise((resolve, reject) => {
+    let stderr = "";
+
+    const timer = setTimeout(() => {
+      reject(new Error(`Server start timed out. ${stderr}`));
+    }, 5000);
+
+    server.stdout.on("data", (chunk) => {
+      if (chunk.toString().includes("Server running")) {
+        clearTimeout(timer);
+        resolve();
+      }
+    });
+
+    server.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    server.on("exit", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`Server exited early with code ${code}. ${stderr}`));
+    });
+  });
+
+  try {
+    const success = await requestJson(port, "/api/test/target-5xx?rate=0");
+    assert.equal(success.statusCode, 200);
+    assert.equal(success.body.code, 200);
+
+    const failure = await requestJson(port, "/api/test/target-5xx?rate=1&code=503");
+    assert.equal(failure.statusCode, 503);
+    assert.equal(failure.body.code, 503);
+
+    const invalidRate = await requestJson(port, "/api/test/target-5xx?rate=nope");
+    assert.equal(invalidRate.statusCode, 400);
+    assert.equal(invalidRate.body.message, "rate must be a number between 0 and 1.");
+  } finally {
+    server.kill("SIGTERM");
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+});
