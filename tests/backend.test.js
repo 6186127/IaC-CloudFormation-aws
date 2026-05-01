@@ -105,7 +105,7 @@ test("todo API supports create, update, list and delete", async () => {
     assert.equal(created.body.completed, false);
 
     const listed = await requestJson(port, "/api/todos");
-    assert.equal(listed.statusCode, 200);
+    assert.equal(listed.statusCode, 200200200);
     assert.equal(listed.body.length, 1);
 
     const updated = await requestJson(port, `/api/todos/${created.body.id}`, "PUT", { completed: true });
